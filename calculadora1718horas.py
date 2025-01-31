@@ -90,6 +90,11 @@ def calculate_theoretical_price(arg_price, us_price_17, us_price_18, ratio):
     theoretical_price = arg_price * (1 + pct_change)
     return theoretical_price
 
+def calculate_implied_exchange_rate(arg_price, us_price, ratio):
+    if arg_price and us_price and ratio and us_price > 0:
+        return (arg_price * ratio) / us_price
+    return None
+
 def main():
     st.title('Calculadora de Precios de Cierre del Mercado Argentino')
 
@@ -220,11 +225,34 @@ def main():
                             )
                         with col2:
                             diff = theoretical_price - arg_price
-                            pct_change = ((theoretical_price/arg_price)-1)*100
+                            pct_change = ((theoretical_price / arg_price) - 1) * 100
                             st.metric(
                                 "Diferencia",
                                 f"${diff:.2f}",
                                 f"{pct_change:+.2f}%"
+                            )
+
+                    # Add implied exchange rate calculations
+                    st.write("---")
+                    st.write("**Tipo de Cambio Implícito:**")
+                    col1, col2 = st.columns(2)
+
+                    # Calculate implied rates with corrected formula
+                    implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio)
+                    implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio)
+
+                    with col1:
+                        if implied_rate_17:
+                            st.metric(
+                                f"TC Implícito 17:00",
+                                f"${implied_rate_17:.2f}"
+                            )
+
+                    with col2:
+                        if implied_rate_current:
+                            st.metric(
+                                f"TC Implícito {prices['us_time'] if prices and prices.get('us_time') else 'Actual'}",
+                                f"${implied_rate_current:.2f}"
                             )
 
         # In the main function, keep only this debug section at the bottom:
