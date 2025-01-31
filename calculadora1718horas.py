@@ -129,6 +129,7 @@ def main():
 
     pairs_df = pd.read_csv('TickersRatios.csv')
     selected_tickers = []
+    all_summary_data = []  # Initialize list for summary data
 
     if pairs_df is not None:
         input_method = st.radio(
@@ -232,7 +233,7 @@ def main():
                             key=f"us_price_current_{arg_ticker}"
                         )
 
-                # Calculate theoretical price
+                # Calculate theoretical price and other metrics
                 if all(v > 0 for v in [arg_price, us_price_17, us_price_current]):
                     theoretical_price = calculate_theoretical_price(
                         arg_price,
@@ -257,44 +258,82 @@ def main():
                                 f"{pct_change:+.2f}%"
                             )
 
-                    # Add implied exchange rate calculations
-                    st.write("---")
-                    st.write("**Tipo de Cambio Implícito:**")
-                    col1, col2 = st.columns(2)
+                        # Calculate implied exchange rates
+                        implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio)
+                        implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio)
 
-                    implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio)
-                    implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio)
+                        st.write("---")
+                        st.write("**Tipo de Cambio Implícito:**")
+                        col1, col2 = st.columns(2)
 
-                    with col1:
-                        if implied_rate_17:
-                            st.metric(
-                                f"TC Implícito 17:00",
-                                f"${implied_rate_17:.2f}"
-                            )
+                        with col1:
+                            if implied_rate_17:
+                                st.metric(
+                                    f"TC Implícito 17:00",
+                                    f"${implied_rate_17:.2f}"
+                                )
 
-                    with col2:
-                        if implied_rate_current:
-                            st.metric(
-                                f"TC Implícito {prices['us_time'] if prices and prices.get('us_time') else 'Actual'}",
-                                f"${implied_rate_current:.2f}"
-                            )
+                        with col2:
+                            if implied_rate_current:
+                                st.metric(
+                                    f"TC Implícito {prices['us_time'] if prices and prices.get('us_time') else 'Actual'}",
+                                    f"${implied_rate_current:.2f}"
+                                )
 
-        with st.expander('Mostrar Información de Depuración'):
-            st.write('Información de Depuración:')
-            st.write(f'Hora actual (Argentina): {datetime.now(pytz.timezone("America/Argentina/Buenos_Aires"))}')
-            if 'prices' in locals():
-                st.write('Datos de precios:', {
-                    'Precio Argentina': prices.get('arg_price'),
-                    'Precio EEUU 17:00': prices.get('us_price_17'),
-                    'Precio EEUU actual': prices.get('us_price_18'),
-                    'Hora Argentina': prices.get('arg_time'),
-                    'Hora EEUU': prices.get('us_time'),
-                    'Hora precio 17:00': prices.get('time_17'),
-                    'Estado delay US': prices.get('delayed_status')
-                })
+                        # Append data to summary
+                        summary_row = {
+                            'Ticker Argentino': arg_ticker,
+                            'Ticker EEUU': us_ticker,
+                            'Ratio': ratio,
+                            'Cierre Argentina': f"${arg_price:.2f}",
+                            'Precio EEUU 17:00': f"${us_price_17:.2f}",
+                            'Cierre EEUU': f"${us_price_current:.2f}",
+                            'Precio Teórico': f"${theoretical_price:.2f}",
+                            'Diferencia': f"${diff:.2f} ({pct_change:+.2f}%)",
+                            'TC Implícito 17:00': f"${implied_rate_17:.2f}",
+                            'TC Implícito Actual': f"${implied_rate_current:.2f}"
+                        }
+                        all_summary_data.append(summary_row)
 
-        if st.button('🔄 Actualizar Precios'):
-            st.rerun()
+            # After processing all tickers, show the summary table
+            if all_summary_data:
+                st.write("---")
+                st.write("**Resumen de Operaciones**")
+
+                summary_df = pd.DataFrame(all_summary_data)
+
+                # Display the summary table
+                st.dataframe(
+                    summary_df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # Add download button for the summary
+                csv_summary = summary_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar Resumen",
+                    data=csv_summary,
+                    file_name=f'resumen_tickers_{datetime.now().strftime("%Y%m%d")}.csv',
+                    mime='text/csv',
+                )
+
+            with st.expander('Mostrar Información de Depuración'):
+                st.write('Información de Depuración:')
+                st.write(f'Hora actual (Argentina): {datetime.now(pytz.timezone("America/Argentina/Buenos_Aires"))}')
+                if 'prices' in locals():
+                    st.write('Datos de precios:', {
+                        'Precio Argentina': prices.get('arg_price'),
+                        'Precio EEUU 17:00': prices.get('us_price_17'),
+                        'Precio EEUU actual': prices.get('us_price_18'),
+                        'Hora Argentina': prices.get('arg_time'),
+                        'Hora EEUU': prices.get('us_time'),
+                        'Hora precio 17:00': prices.get('time_17'),
+                        'Estado delay US': prices.get('delayed_status')
+                    })
+
+            if st.button('🔄 Actualizar Precios'):
+                st.rerun()
 
 if __name__ == '__main__':
     main()
