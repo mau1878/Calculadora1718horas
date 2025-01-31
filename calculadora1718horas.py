@@ -94,15 +94,38 @@ def main():
     st.title('Calculadora de Precios de Cierre del Mercado Argentino')
 
     pairs_df = pd.read_csv('TickersRatios.csv')
+    selected_tickers = []  # Initialize with empty list
 
     if pairs_df is not None:
-        selected_tickers = st.multiselect(
-            'Seleccionar Tickers Argentinos',
-            pairs_df['ArgentineTicker'].tolist()
+        input_method = st.radio(
+            "Método de selección de tickers",
+            ["Ingresar tickers manualmente", "Usar selector múltiple"]
         )
 
+        if input_method == "Ingresar tickers manualmente":
+            ticker_input = st.text_input(
+                'Ingrese tickers separados por coma (ejemplo: GGAL,YPFD,NVDA,MSFT)',
+                help='Ingrese los tickers argentinos separados por coma, sin espacios'
+            )
+            if ticker_input:
+                input_tickers = [ticker.strip() for ticker in ticker_input.split(',')]
+                # Validate tickers
+                selected_tickers = [ticker for ticker in input_tickers
+                                  if ticker in pairs_df['ArgentineTicker'].values]
+                invalid_tickers = set(input_tickers) - set(selected_tickers)
+                if invalid_tickers:
+                    st.warning(f"Tickers no válidos: {', '.join(invalid_tickers)}")
+        else:
+            selected_tickers = st.multiselect(
+                'Seleccionar Tickers Argentinos',
+                pairs_df['ArgentineTicker'].tolist()
+            )
+
+        # Rest of your code
         if selected_tickers:
             for arg_ticker in selected_tickers:
+                # ... (rest of your existing code)
+                # ... (rest of your existing code)
                 row = pairs_df[pairs_df['ArgentineTicker'] == arg_ticker].iloc[0]
                 us_ticker = row['WallStreetTicker']
                 ratio = row['Ratio']
