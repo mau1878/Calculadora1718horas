@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 import pytz
 import time
 
-def get_yf_data(ticker, start_date, end_date, retries=3):
-    """Fetch data from yfinance with retries and better error handling"""
+def get_yf_data(ticker, start_date, end_date, apply_delay=False, retries=3):
+    """
+    Fetch data from yfinance with optional 20-minute delay
+    """
     for attempt in range(retries):
         try:
             stock = yf.download(ticker,
@@ -14,15 +16,38 @@ def get_yf_data(ticker, start_date, end_date, retries=3):
                               end=end_date,
                               interval='1m',
                               progress=False)
+
             if not stock.empty:
+                if apply_delay:
+                    # Apply 20-minute delay by shifting the data forward
+                    current_time = datetime.now(pytz.UTC)
+                    delay_mask = stock.index <= (current_time - timedelta(minutes=20))
+                    stock = stock[delay_mask]
                 return stock
-            time.sleep(1)  # Wait 1 second before retrying
+            time.sleep(1)
         except Exception as e:
-            if attempt == retries - 1:  # Last attempt
+            if attempt == retries - 1:
                 st.error(f"Failed to fetch data for {ticker} after {retries} attempts: {str(e)}")
             time.sleep(1)
     return None
 
+def should_apply_delay():
+    """
+    Determine if we should apply delay based on current time
+    Returns: bool
+    """
+    tz = pytz.timezone('America/Argentina/Buenos_Aires')
+    now = datetime.now(tz)
+
+    # Create time objects for comparison
+    market_start = now.replace(hour=11, minute=30, second=0, microsecond=0)
+    market_end = now.replace(hour=17, minute=0, second=0, microsecond=0)
+
+    # Convert current time to comparable format
+    current_time = now.replace(microsecond=0)
+
+    # Return True only if we're between 11:30 and 17:00
+    return market_start <= current_time < market_end
 
 def get_prices_and_calculate(arg_ticker, us_ticker):
     try:
@@ -31,23 +56,27 @@ def get_prices_and_calculate(arg_ticker, us_ticker):
         start_date = now.date() - timedelta(days=1)
         end_date = now.date() + timedelta(days=1)
 
+        # Check if we should apply delay to US data
+        apply_us_delay = should_apply_delay()
+
         result = {
             'arg_price': None,
             'us_price_17': None,
             'us_price_18': None,
             'arg_time': None,
             'us_time': None,
-            'time_17': None
+            'time_17': None,
+            'delayed_status': 'DELAYED' if apply_us_delay else 'REAL-TIME'
         }
 
-        # Fetch Argentine data
-        arg_data = get_yf_data(f"{arg_ticker}.BA", start_date, end_date)
+        # Fetch Argentine data (always delayed by 20 minutes)
+        arg_data = get_yf_data(f"{arg_ticker}.BA", start_date, end_date, apply_delay=True)
         if arg_data is not None and not arg_data.empty:
             result['arg_price'] = float(arg_data['Close'].iloc[-1])
             result['arg_time'] = arg_data.index[-1].tz_convert(tz).strftime('%H:%M:%S')
 
-        # Fetch US data
-        us_data = get_yf_data(us_ticker, start_date, end_date)
+        # Fetch US data with conditional delay
+        us_data = get_yf_data(us_ticker, start_date, end_date, apply_delay=apply_us_delay)
         if us_data is not None and not us_data.empty:
             result['us_price_18'] = float(us_data['Close'].iloc[-1])
             result['us_time'] = us_data.index[-1].tz_convert(tz).strftime('%H:%M:%S')
@@ -99,7 +128,7 @@ def main():
     st.title('Calculadora de Precios de Cierre del Mercado Argentino')
 
     pairs_df = pd.read_csv('TickersRatios.csv')
-    selected_tickers = []  # Initialize with empty list
+    selected_tickers = []
 
     if pairs_df is not None:
         input_method = st.radio(
@@ -114,7 +143,6 @@ def main():
             )
             if ticker_input:
                 input_tickers = [ticker.strip() for ticker in ticker_input.split(',')]
-                # Validate tickers
                 selected_tickers = [ticker for ticker in input_tickers
                                   if ticker in pairs_df['ArgentineTicker'].values]
                 invalid_tickers = set(input_tickers) - set(selected_tickers)
@@ -126,11 +154,8 @@ def main():
                 pairs_df['ArgentineTicker'].tolist()
             )
 
-        # Rest of your code
         if selected_tickers:
             for arg_ticker in selected_tickers:
-                # ... (rest of your existing code)
-                # ... (rest of your existing code)
                 row = pairs_df[pairs_df['ArgentineTicker'] == arg_ticker].iloc[0]
                 us_ticker = row['WallStreetTicker']
                 ratio = row['Ratio']
@@ -154,7 +179,7 @@ def main():
                 with col1:
                     if prices and prices['arg_price'] is not None:
                         st.metric(
-                            f"Cierre Argentina ({prices['arg_time']})",
+                            f"Cierre Argentina ({prices['arg_time']}) - DELAYED",
                             f"${prices['arg_price']:.2f}"
                         )
                         arg_price = prices['arg_price']
@@ -193,7 +218,7 @@ def main():
                 with col3:
                     if prices and prices['us_price_18'] is not None:
                         st.metric(
-                            f"Cierre EEUU ({prices['us_time']})",
+                            f"Cierre EEUU ({prices['us_time']}) - {prices['delayed_status']}",
                             f"${prices['us_price_18']:.2f}"
                         )
                         us_price_current = prices['us_price_18']
@@ -207,7 +232,7 @@ def main():
                             key=f"us_price_current_{arg_ticker}"
                         )
 
-                # Calculate theoretical price if we have all necessary values
+                # Calculate theoretical price
                 if all(v > 0 for v in [arg_price, us_price_17, us_price_current]):
                     theoretical_price = calculate_theoretical_price(
                         arg_price,
@@ -237,7 +262,6 @@ def main():
                     st.write("**Tipo de Cambio Implícito:**")
                     col1, col2 = st.columns(2)
 
-                    # Calculate implied rates with corrected formula
                     implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio)
                     implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio)
 
@@ -255,8 +279,6 @@ def main():
                                 f"${implied_rate_current:.2f}"
                             )
 
-        # In the main function, keep only this debug section at the bottom:
-
         with st.expander('Mostrar Información de Depuración'):
             st.write('Información de Depuración:')
             st.write(f'Hora actual (Argentina): {datetime.now(pytz.timezone("America/Argentina/Buenos_Aires"))}')
@@ -267,7 +289,8 @@ def main():
                     'Precio EEUU actual': prices.get('us_price_18'),
                     'Hora Argentina': prices.get('arg_time'),
                     'Hora EEUU': prices.get('us_time'),
-                    'Hora precio 17:00': prices.get('time_17')
+                    'Hora precio 17:00': prices.get('time_17'),
+                    'Estado delay US': prices.get('delayed_status')
                 })
 
         if st.button('🔄 Actualizar Precios'):
