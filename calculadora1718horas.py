@@ -12,14 +12,14 @@ def get_yf_data(ticker, start_date, end_date, apply_delay=False, retries=3):
     for attempt in range(retries):
         try:
             stock = yf.download(ticker,
-                              start=start_date,
-                              end=end_date,
-                              interval='1m',
-                              progress=False)
+                                start=start_date,
+                                end=end_date,
+                                interval='1m',
+                                progress=False)
 
             if not stock.empty:
                 if apply_delay:
-                    # Apply 20-minute delay by shifting the data forward
+                    # Apply 20-minute delay by filtering out data newer than current time minus 20 minutes
                     current_time = datetime.now(pytz.UTC)
                     delay_mask = stock.index <= (current_time - timedelta(minutes=20))
                     stock = stock[delay_mask]
@@ -43,11 +43,8 @@ def should_apply_delay():
     market_start = now.replace(hour=11, minute=30, second=0, microsecond=0)
     market_end = now.replace(hour=17, minute=0, second=0, microsecond=0)
 
-    # Convert current time to comparable format
-    current_time = now.replace(microsecond=0)
-
     # Return True only if we're between 11:30 and 17:00
-    return market_start <= current_time < market_end
+    return market_start <= now.replace(microsecond=0) < market_end
 
 def get_prices_and_calculate(arg_ticker, us_ticker):
     try:
@@ -81,26 +78,22 @@ def get_prices_and_calculate(arg_ticker, us_ticker):
             result['us_price_18'] = float(us_data['Close'].iloc[-1])
             result['us_time'] = us_data.index[-1].tz_convert(tz).strftime('%H:%M:%S')
 
-            # Find price closest to 17:00
+            # Find price closest to 17:00 within a ±10 minute window
             target_time = now.replace(hour=17, minute=0, second=0, microsecond=0)
             window_start = target_time - timedelta(minutes=10)
             window_end = target_time + timedelta(minutes=10)
 
-            closest_time = None
             min_diff = timedelta(hours=24)
-
             for idx in us_data.index:
                 try:
                     idx_time = idx.tz_convert(tz)
                     idx_time_today = idx_time.replace(year=target_time.year,
-                                                    month=target_time.month,
-                                                    day=target_time.day)
-
+                                                      month=target_time.month,
+                                                      day=target_time.day)
                     if window_start <= idx_time_today <= window_end:
                         time_diff = abs(idx_time_today - target_time)
                         if time_diff < min_diff:
                             min_diff = time_diff
-                            closest_time = idx
                             result['us_price_17'] = float(us_data.loc[idx, 'Close'])
                             result['time_17'] = idx_time_today.strftime('%H:%M:%S')
                 except Exception:
@@ -113,7 +106,7 @@ def get_prices_and_calculate(arg_ticker, us_ticker):
         return None
 
 def calculate_theoretical_price(arg_price, us_price_17, us_price_18, ratio):
-    if us_price_17 == 0 or us_price_17 is None:
+    if not us_price_17 or us_price_17 == 0:
         return None
     pct_change = (us_price_18 - us_price_17) / us_price_17
     theoretical_price = arg_price * (1 + pct_change)
@@ -129,7 +122,7 @@ def main():
 
     pairs_df = pd.read_csv('TickersRatios.csv')
     selected_tickers = []
-    all_summary_data = []  # Initialize list for summary data
+    all_summary_data = []  # List for summary data
 
     if pairs_df is not None:
         input_method = st.radio(
@@ -145,7 +138,7 @@ def main():
             if ticker_input:
                 input_tickers = [ticker.strip() for ticker in ticker_input.split(',')]
                 selected_tickers = [ticker for ticker in input_tickers
-                                  if ticker in pairs_df['ArgentineTicker'].values]
+                                    if ticker in pairs_df['ArgentineTicker'].values]
                 invalid_tickers = set(input_tickers) - set(selected_tickers)
                 if invalid_tickers:
                     st.warning(f"Tickers no válidos: {', '.join(invalid_tickers)}")
@@ -215,7 +208,7 @@ def main():
                             key=f"us_price_17_{arg_ticker}"
                         )
 
-                # US current price
+                # US current price (delayed / real-time)
                 with col3:
                     if prices and prices['us_price_18'] is not None:
                         st.metric(
@@ -233,83 +226,64 @@ def main():
                             key=f"us_price_current_{arg_ticker}"
                         )
 
-                # Calculate theoretical price and other metrics
-                if all(v > 0 for v in [arg_price, us_price_17, us_price_current]):
+                # Calculate theoretical price if all required US prices are available
+                if arg_price > 0 and us_price_17 > 0 and us_price_current > 0:
                     theoretical_price = calculate_theoretical_price(
                         arg_price,
                         us_price_17,
                         us_price_current,
                         ratio
                     )
-
                     if theoretical_price:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric(
-                                "Precio Teórico",
-                                f"${theoretical_price:.2f}"
-                            )
-                        with col2:
-                            diff = theoretical_price - arg_price
-                            pct_change = ((theoretical_price / arg_price) - 1) * 100
-                            st.metric(
-                                "Diferencia",
-                                f"${diff:.2f}",
-                                f"{pct_change:+.2f}%"
-                            )
+                        calc_col1, calc_col2 = st.columns(2)
+                        with calc_col1:
+                            st.metric("Precio Teórico", f"${theoretical_price:.2f}")
+                        diff = theoretical_price - arg_price
+                        pct_change = ((theoretical_price / arg_price) - 1) * 100
+                        with calc_col2:
+                            st.metric("Diferencia", f"${diff:.2f}", f"{pct_change:+.2f}%")
+                else:
+                    st.info("No se pudo calcular el precio teórico debido a datos incompletos (faltan precios de EEUU a 17:00 o actual).")
 
-                        # Calculate implied exchange rates
-                        implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio)
-                        implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio)
+                # Calculate implied exchange rates regardless of whether US 17:00 data is available
+                implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio) if arg_price > 0 and us_price_current > 0 else None
+                implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio) if arg_price > 0 and us_price_17 > 0 else None
 
-                        st.write("---")
-                        st.write("**Tipo de Cambio Implícito:**")
-                        col1, col2 = st.columns(2)
+                # Fallback: if no US 17:00 data is available, use the current delayed rate for the 17:00 implied rate display
+                if not implied_rate_17 and implied_rate_current:
+                    implied_rate_17 = implied_rate_current
 
-                        with col1:
-                            if implied_rate_17:
-                                st.metric(
-                                    f"TC Implícito 17:00",
-                                    f"${implied_rate_17:.2f}"
-                                )
+                st.write("---")
+                st.write("**Tipo de Cambio Implícito:**")
+                disp_col1, disp_col2 = st.columns(2)
+                with disp_col1:
+                    st.metric("TC Implícito 17:00", f"${implied_rate_17:.2f}" if implied_rate_17 else "N/A")
+                with disp_col2:
+                    us_time_label = prices['us_time'] if prices and prices.get('us_time') else 'Actual'
+                    st.metric(f"TC Implícito {us_time_label}", f"${implied_rate_current:.2f}" if implied_rate_current else "N/A")
 
-                        with col2:
-                            if implied_rate_current:
-                                st.metric(
-                                    f"TC Implícito {prices['us_time'] if prices and prices.get('us_time') else 'Actual'}",
-                                    f"${implied_rate_current:.2f}"
-                                )
+                # Append data to summary if possible
+                if arg_price > 0 and us_price_17 > 0 and us_price_current > 0:
+                    summary_row = {
+                        'Ticker Argentino': arg_ticker,
+                        'Ticker EEUU': us_ticker,
+                        'Ratio': ratio,
+                        'Cierre Argentina': f"${arg_price:.2f}",
+                        'Precio EEUU 17:00': f"${us_price_17:.2f}",
+                        'Cierre EEUU': f"${us_price_current:.2f}",
+                        'Precio Teórico': f"${theoretical_price:.2f}" if theoretical_price else "N/A",
+                        'Diferencia': f"${diff:.2f} ({pct_change:+.2f}%)" if theoretical_price else "N/A",
+                        'TC Implícito 17:00': f"${implied_rate_17:.2f}" if implied_rate_17 else "N/A",
+                        'TC Implícito Actual': f"${implied_rate_current:.2f}" if implied_rate_current else "N/A"
+                    }
+                    all_summary_data.append(summary_row)
 
-                        # Append data to summary
-                        summary_row = {
-                            'Ticker Argentino': arg_ticker,
-                            'Ticker EEUU': us_ticker,
-                            'Ratio': ratio,
-                            'Cierre Argentina': f"${arg_price:.2f}",
-                            'Precio EEUU 17:00': f"${us_price_17:.2f}",
-                            'Cierre EEUU': f"${us_price_current:.2f}",
-                            'Precio Teórico': f"${theoretical_price:.2f}",
-                            'Diferencia': f"${diff:.2f} ({pct_change:+.2f}%)",
-                            'TC Implícito 17:00': f"${implied_rate_17:.2f}",
-                            'TC Implícito Actual': f"${implied_rate_current:.2f}"
-                        }
-                        all_summary_data.append(summary_row)
-
-            # After processing all tickers, show the summary table
+            # Display summary of operations
             if all_summary_data:
                 st.write("---")
                 st.write("**Resumen de Operaciones**")
-
                 summary_df = pd.DataFrame(all_summary_data)
-
-                # Display the summary table
-                st.dataframe(
-                    summary_df,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                # Add download button for the summary
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
                 csv_summary = summary_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Descargar Resumen",
@@ -333,7 +307,7 @@ def main():
                     })
 
             if st.button('🔄 Actualizar Precios'):
-                st.rerun()
+                st.experimental_rerun()
 
 if __name__ == '__main__':
     main()
