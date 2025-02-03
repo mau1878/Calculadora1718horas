@@ -174,7 +174,7 @@ def main():
                     if prices and prices['arg_price'] is not None:
                         st.metric(
                             f"Cierre Argentina ({prices['arg_time']}) - DELAYED",
-                            f"${prices['arg_price']:.2f}"
+                            f"ARS {prices['arg_price']:.2f}"
                         )
                         arg_price = prices['arg_price']
                     else:
@@ -192,7 +192,7 @@ def main():
                     if prices and prices['us_price_17'] is not None:
                         st.metric(
                             f"Precio EEUU {prices.get('time_17', '17:00')} GMT-3",
-                            f"${prices['us_price_17']:.2f}"
+                            f"USD {prices['us_price_17']:.2f}"
                         )
                         us_price_17 = prices['us_price_17']
                     else:
@@ -208,12 +208,12 @@ def main():
                             key=f"us_price_17_{arg_ticker}"
                         )
 
-                # US current price (delayed / real-time)
+                # US current price
                 with col3:
                     if prices and prices['us_price_18'] is not None:
                         st.metric(
                             f"Cierre EEUU ({prices['us_time']}) - {prices['delayed_status']}",
-                            f"${prices['us_price_18']:.2f}"
+                            f"USD {prices['us_price_18']:.2f}"
                         )
                         us_price_current = prices['us_price_18']
                     else:
@@ -226,6 +226,11 @@ def main():
                             key=f"us_price_current_{arg_ticker}"
                         )
 
+                # Initialize variables
+                theoretical_price = None
+                diff = None
+                pct_change = None
+
                 # Calculate theoretical price if all required US prices are available
                 if arg_price > 0 and us_price_17 > 0 and us_price_current > 0:
                     theoretical_price = calculate_theoretical_price(
@@ -237,19 +242,19 @@ def main():
                     if theoretical_price:
                         calc_col1, calc_col2 = st.columns(2)
                         with calc_col1:
-                            st.metric("Precio Teórico", f"${theoretical_price:.2f}")
+                            st.metric("Precio Teórico", f"ARS {theoretical_price:.2f}")
                         diff = theoretical_price - arg_price
                         pct_change = ((theoretical_price / arg_price) - 1) * 100
                         with calc_col2:
-                            st.metric("Diferencia", f"${diff:.2f}", f"{pct_change:+.2f}%")
+                            st.metric("Diferencia", f"ARS {diff:.2f}", f"{pct_change:+.2f}%")
                 else:
                     st.info("No se pudo calcular el precio teórico debido a datos incompletos (faltan precios de EEUU a 17:00 o actual).")
 
-                # Calculate implied exchange rates regardless of whether US 17:00 data is available
+                # Calculate implied exchange rates
                 implied_rate_current = calculate_implied_exchange_rate(arg_price, us_price_current, ratio) if arg_price > 0 and us_price_current > 0 else None
                 implied_rate_17 = calculate_implied_exchange_rate(arg_price, us_price_17, ratio) if arg_price > 0 and us_price_17 > 0 else None
 
-                # Fallback: if no US 17:00 data is available, use the current delayed rate for the 17:00 implied rate display
+                # Fallback for implied rate display
                 if not implied_rate_17 and implied_rate_current:
                     implied_rate_17 = implied_rate_current
 
@@ -257,10 +262,12 @@ def main():
                 st.write("**Tipo de Cambio Implícito:**")
                 disp_col1, disp_col2 = st.columns(2)
                 with disp_col1:
-                    st.metric("TC Implícito 17:00", f"${implied_rate_17:.2f}" if implied_rate_17 else "N/A")
+                    st.metric("TC Implícito 17:00",
+                             f"ARS {implied_rate_17:.2f}" if implied_rate_17 else "N/A")
                 with disp_col2:
                     us_time_label = prices['us_time'] if prices and prices.get('us_time') else 'Actual'
-                    st.metric(f"TC Implícito {us_time_label}", f"${implied_rate_current:.2f}" if implied_rate_current else "N/A")
+                    st.metric(f"TC Implícito {us_time_label}",
+                             f"ARS {implied_rate_current:.2f}" if implied_rate_current else "N/A")
 
                 # Append data to summary if possible
                 if arg_price > 0 and us_price_17 > 0 and us_price_current > 0:
@@ -268,13 +275,13 @@ def main():
                         'Ticker Argentino': arg_ticker,
                         'Ticker EEUU': us_ticker,
                         'Ratio': ratio,
-                        'Cierre Argentina': f"${arg_price:.2f}",
-                        'Precio EEUU 17:00': f"${us_price_17:.2f}",
-                        'Cierre EEUU': f"${us_price_current:.2f}",
-                        'Precio Teórico': f"${theoretical_price:.2f}" if theoretical_price else "N/A",
-                        'Diferencia': f"${diff:.2f} ({pct_change:+.2f}%)" if theoretical_price else "N/A",
-                        'TC Implícito 17:00': f"${implied_rate_17:.2f}" if implied_rate_17 else "N/A",
-                        'TC Implícito Actual': f"${implied_rate_current:.2f}" if implied_rate_current else "N/A"
+                        'Cierre Argentina': f"ARS {arg_price:.2f}",
+                        'Precio EEUU 17:00': f"USD {us_price_17:.2f}",
+                        'Cierre EEUU': f"USD {us_price_current:.2f}",
+                        'Precio Teórico': f"ARS {theoretical_price:.2f}" if theoretical_price else "N/A",
+                        'Diferencia': f"ARS {diff:.2f} ({pct_change:+.2f}%)" if theoretical_price else "N/A",
+                        'TC Implícito 17:00': f"ARS {implied_rate_17:.2f}" if implied_rate_17 else "N/A",
+                        'TC Implícito Actual': f"ARS {implied_rate_current:.2f}" if implied_rate_current else "N/A"
                     }
                     all_summary_data.append(summary_row)
 
