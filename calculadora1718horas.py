@@ -46,12 +46,15 @@ def should_apply_delay():
     # Return True only if we're between 11:30 and 17:00
     return market_start <= now.replace(microsecond=0) < market_end
 
+
 def get_prices_and_calculate(arg_ticker, us_ticker):
     try:
         tz = pytz.timezone('America/Argentina/Buenos_Aires')
         now = datetime.now(tz)
-        start_date = now.date() - timedelta(days=1)
-        end_date = now.date() + timedelta(days=1)
+
+        # Adjust start and end dates to ensure we capture today's trading
+        start_date = now.date()  # Start from today
+        end_date = now.date() + timedelta(days=1)  # Until tomorrow
 
         # Check if we should apply delay to US data
         apply_us_delay = should_apply_delay()
@@ -78,26 +81,29 @@ def get_prices_and_calculate(arg_ticker, us_ticker):
             result['us_price_18'] = float(us_data['Close'].iloc[-1])
             result['us_time'] = us_data.index[-1].tz_convert(tz).strftime('%H:%M:%S')
 
-            # Find price closest to 17:00 within a ±10 minute window
+            # Find today's price closest to 17:00 within a ±10 minute window
             target_time = now.replace(hour=17, minute=0, second=0, microsecond=0)
             window_start = target_time - timedelta(minutes=10)
             window_end = target_time + timedelta(minutes=10)
 
-            min_diff = timedelta(hours=24)
-            for idx in us_data.index:
-                try:
-                    idx_time = idx.tz_convert(tz)
-                    idx_time_today = idx_time.replace(year=target_time.year,
-                                                      month=target_time.month,
-                                                      day=target_time.day)
-                    if window_start <= idx_time_today <= window_end:
-                        time_diff = abs(idx_time_today - target_time)
-                        if time_diff < min_diff:
-                            min_diff = time_diff
-                            result['us_price_17'] = float(us_data.loc[idx, 'Close'])
-                            result['time_17'] = idx_time_today.strftime('%H:%M:%S')
-                except Exception:
-                    continue
+            # Filter data for today only
+            today_data = us_data[us_data.index.date == now.date()]
+
+            if not today_data.empty:
+                # Convert index to Argentina timezone for comparison
+                today_data_tz = today_data.copy()
+                today_data_tz.index = today_data_tz.index.tz_convert(tz)
+
+                # Find closest time to 17:00
+                target_mask = (today_data_tz.index.time >= window_start.time()) & \
+                              (today_data_tz.index.time <= window_end.time())
+                window_data = today_data_tz[target_mask]
+
+                if not window_data.empty:
+                    closest_time = min(window_data.index,
+                                       key=lambda x: abs(x.replace(second=0, microsecond=0) - target_time))
+                    result['us_price_17'] = float(window_data.loc[closest_time, 'Close'])
+                    result['time_17'] = closest_time.strftime('%H:%M:%S')
 
         return result
 
