@@ -5,30 +5,45 @@ from datetime import datetime, timedelta
 import pytz
 import time
 
+
 def get_yf_data(ticker, start_date, end_date, apply_delay=False, retries=3):
     """
-    Fetch data from yfinance with optional 20-minute delay
+    Fetch data from yfinance with optional 20-minute delay and fallback to previous available date
     """
-    for attempt in range(retries):
-        try:
-            stock = yf.download(ticker,
-                                start=start_date,
-                                end=end_date,
-                                interval='1m',
-                                progress=False)
+    original_start_date = start_date
+    max_days_back = 5  # Maximum number of days to look back
 
-            if not stock.empty:
-                if apply_delay:
-                    # Apply 20-minute delay by filtering out data newer than current time minus 20 minutes
-                    current_time = datetime.now(pytz.UTC)
-                    delay_mask = stock.index <= (current_time - timedelta(minutes=20))
-                    stock = stock[delay_mask]
-                return stock
-            time.sleep(1)
-        except Exception as e:
-            if attempt == retries - 1:
-                st.error(f"Failed to fetch data for {ticker} after {retries} attempts: {str(e)}")
-            time.sleep(1)
+    for days_back in range(max_days_back):
+        adjusted_start_date = original_start_date - timedelta(days=days_back)
+        adjusted_end_date = end_date - timedelta(days=days_back)
+
+        for attempt in range(retries):
+            try:
+                stock = yf.download(ticker,
+                                    start=adjusted_start_date,
+                                    end=adjusted_end_date,
+                                    interval='1m',
+                                    progress=False)
+
+                if not stock.empty:
+                    if apply_delay:
+                        # Apply 20-minute delay by filtering out data newer than current time minus 20 minutes
+                        current_time = datetime.now(pytz.UTC)
+                        delay_mask = stock.index <= (current_time - timedelta(minutes=20))
+                        stock = stock[delay_mask]
+
+                    if not stock.empty:
+                        if days_back > 0:
+                            st.info(
+                                f"Using data from {adjusted_start_date.strftime('%Y-%m-%d')} for {ticker} as current date data is not available.")
+                        return stock
+
+                time.sleep(1)
+            except Exception as e:
+                if attempt == retries - 1 and days_back == max_days_back - 1:
+                    st.error(f"Failed to fetch data for {ticker} after {retries} attempts: {str(e)}")
+                time.sleep(1)
+
     return None
 
 def should_apply_delay():
